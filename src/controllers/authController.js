@@ -1,198 +1,255 @@
-require('dotenv').config();
-const jwt = require('jsonwebtoken');
-const User = require('../models/user'); // Your User model
-const { UserDetail } = require('otpless-node-js-auth-sdk');
+import env from '../../config/env';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, Platform } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import BackButton from '../../components/BackButton';
 
-// Helper to generate a JWT
-const generateJWTToken = (userId) => {
-  const JWT_EXPIRATION_Value = process.env.JWT_EXPIRATION || '180d'
-  return jwt.sign({ userId }, process.env.JWT_SECRET, {
-    expiresIn: JWT_EXPIRATION_Value, // e.g., '1d' for 1 day
-  });
-};
+const OTPVerification = () => {
+  const [otp, setOtp] = useState(['', '', '', '']);
+  const inputRefs = useRef([]);
+  const navigation = useNavigation();
+  const route = useRoute();
+  const { mobileNumber = '', language = 'English' } = route.params || {};
+  const [timer, setTimer] = useState(30);
 
-// Helper to generate unique value
-const generateUniqueValue = () => {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36);
-};
+  // Log navigation params
+  useEffect(() => {
+    console.log('OTPVerification mounted with params:', { mobileNumber, language });
+  }, [mobileNumber, language]);
 
-// Store OTP details temporarily (in production, use Redis or similar)
-const otpStore = new Map();
+  const translations = {
+    English: {
+      header: 'OTP Verification',
+      subHeader: `Please check your ${mobileNumber} to see the verification code`,
+      otpLabel: 'OTP Code',
+      verifyButtonText: 'Verify',
+      resendText: 'Resending code in',
+    },
+    Marathi: {
+      header: 'OTP पडताळणी',
+      subHeader: `कृपया तुमच्या ${mobileNumber} वर OTP कोड पहा`,
+      otpLabel: 'OTP कोड',
+      verifyButtonText: 'पडताळा',
+      resendText: 'कोड पुन्हा पाठविला जात आहे',
+    },
+    Hindi: {
+      header: 'OTP सत्यापन',
+      subHeader: `कृपया अपने ${mobileNumber} पर सत्यापन कोड देखें`,
+      otpLabel: 'OTP कोड',
+      verifyButtonText: 'सत्यापित करें',
+      resendText: 'कोड फिर से भेजा जा रहा है',
+    },
+  };
 
-// Step 1: Send OTP
-const sendOTP = async (req, res) => {
-  try {
-    const { mobile } = req.body;  
-    console.log('Sending OTP for:', mobile);
+  const { header, subHeader, otpLabel, verifyButtonText, resendText } = translations[language || 'English'];
 
-    const clientId = process.env.OTPLESS_CLIENT_ID;
-    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    const channel = 'SMS';
-    const orderId = generateUniqueValue();
-    const expiry = process.env.OTPLESS_EXPIRY;
-    const otpLength = process.env.OTPLESS_OTP_LENGTH;
+  useEffect(() => {
+    // Start timer
+    if (timer > 0) {
+      const interval = setInterval(() => {
+        setTimer((prevTimer) => prevTimer - 1);
+      }, 1000);
 
-    if (!clientId || !clientSecret) {
-      console.error('Missing required environment variables');
-      return res.status(500).json({ 
-        message: 'Server configuration error',
-        success: false 
-      });
+      return () => clearInterval(interval);
     }
+  }, [timer]);
 
-    if (!mobile || !/^\d{10}$/.test(mobile)) {
-      console.error('Invalid mobile number:', mobile);
-      return res.status(400).json({ 
-        message: 'Invalid mobile number. Please provide a 10-digit number.',
-        success: false 
-      });
+  const handleOtpChange = (text: string, index: number) => {
+    const newOtp = [...otp];
+    newOtp[index] = text;
+    setOtp(newOtp);
+
+    // Auto-focus next input
+    if (text && index < 3) {
+      inputRefs.current[index + 1].focus();
     }
+  };
 
-    const phoneNumber = "+91" + mobile;
-    console.log('Sending SMS OTP to:', phoneNumber);
-
-    const response = await UserDetail.sendOTP(
-      phoneNumber,   // phone number
-      null,         // email (not needed for SMS)
-      channel,      // SMS channel
-      null,         // hash (optional)
-      orderId,      // orderId
-      expiry,       // expiry
-      otpLength,    // otpLength
-      clientId,     // clientId
-      clientSecret  // clientSecret
-    );
-    console.log('OTP Response:', response);
-
-    // Store the OTP details for verification
-    otpStore.set(mobile, {
-      orderId,
-      timestamp: Date.now()
-    });
-
-    // Clean up old entries after 5 minutes
-    setTimeout(() => {
-      otpStore.delete(mobile);
-    }, 5 * 60 * 1000);
-
-    return res.status(200).json({ 
-      message: 'OTP sent successfully',
-      success: true
-    });
-  } catch (error) {
-    console.error('OTP Error:', error);
-    return res.status(500).json({ 
-      message: 'Failed to send OTP. Please try again.',
-      success: false
-    });
-  }
-};
-
-// Step 2: Verify OTP and Login
-const verifyOTPAndLogin = async (req, res) => {
-  try {
-    const { mobile, otp } = req.body;  
-    console.log('Verifying OTP:', { mobile, otp });
-    
-    const clientId = process.env.OTPLESS_CLIENT_ID;
-    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-
-    if (!mobile || !otp) {
-      console.error('Missing required fields:', { mobile, otp });
-      return res.status(400).json({ 
-        message: 'Mobile number and OTP are required',
-        success: false 
-      });
+  const handleKeyPress = (e: any, index: number) => {
+    if (e.nativeEvent.key === 'Backspace' && !otp[index] && index > 0) {
+      inputRefs.current[index - 1].focus();
     }
+  };
 
-    const phoneNumber = "+91" + mobile;
-    console.log('Verifying OTP for phone:', phoneNumber);
-
-    // Get stored OTP details
-    const storedData = otpStore.get(mobile);
-    if (!storedData) {
-      console.error('No OTP request found for this number');
-      return res.status(400).json({ 
-        message: 'Please request a new OTP',
-        success: false 
-      });
-    }
-
+  const verifyOTP = async () => {
     try {
-      console.log('Using stored orderId:', storedData.orderId);
-      const response = await UserDetail.verifyOTP(
-        "",           // email
-        phoneNumber,  // phone
-        storedData.orderId,  // use stored orderId
-        otp,         // otp
-        clientId,    // clientId
-        clientSecret // clientSecret
+      const otpValue = otp.join('');
+      console.log('Verifying OTP with data:', { mobileNumber, otp: otpValue });
+
+      const response = await fetch(`${env.API_URL}login/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          mobile: mobileNumber,
+          otp: otpValue
+        }),
+      });
+
+      console.log('Verification response status:', response.status);
+      const data = await response.json();
+      console.log('Verification response:', data);
+
+      if (response.ok && data.success) {
+        // Store the token
+        const token = "Bearer " + data.token;
+        console.log('Token received:', token);
+        await AsyncStorage.setItem('token', token);
+
+        // Navigate based on user status
+        if (data.userStatus === 'In Progress') {
+          navigation.navigate('JoinInNow');
+        } else {
+          navigation.navigate('Home');
+        }
+      } else {
+        throw new Error(data.message || 'Invalid OTP');
+      }
+    } catch (error) {
+      console.error('OTP verification failed:', error);
+      Alert.alert(
+        'Error',
+        error.message || 'Failed to verify OTP. Please try again.',
+        [{ text: 'OK' }]
       );
-      console.log('OTP verification response:', JSON.stringify(response, null, 2));
-
-      if (!response || !response.isOTPVerified) {
-        console.error('OTP verification failed:', response);
-        return res.status(400).json({ 
-          message: 'Invalid OTP',
-          success: false 
-        });
-      }
-
-      // Find or create user in the database
-      let user = await User.findOne({ mobileNumber: mobile });  
-      if (!user) {
-        user = new User({ mobileNumber: mobile });  
-        await user.save();
-      }
-
-      // Generate JWT
-      const token = generateJWTToken(user._id);
-
-      // Clear the stored OTP data
-      otpStore.delete(mobile);
-
-      return res.status(200).json({
-        token,
-        userStatus: user.status || 'In Progress',
-        message: 'Login successful',
-        success: true
-      });
-    } catch (verifyError) {
-      console.error('OTP verification error:', verifyError);
-      return res.status(400).json({ 
-        message: 'Failed to verify OTP',
-        success: false 
-      });
+      
+      // Clear OTP fields on error
+      setOtp(['', '', '', '']);
+      inputRefs.current[0]?.focus();
     }
-  } catch (error) {
-    console.error('OTP verification error:', error);
-    res.status(500).json({ 
-      error: error.message,
-      message: 'Failed to verify OTP',
-      success: false 
-    });
-  }
-};
+  };
 
-// Step 3: Middleware to Authenticate Requests
-const authenticateRequest = (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
+  const resendOTP = async () => {
+    try {
+      const response = await fetch(`${env.API_URL}login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          mobileNumber
+        }),
+      });
 
-  if (!token) {
-    return res.status(401).json({ message: 'Access denied, token missing!' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(403).json({ message: 'Invalid token' });
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        setTimer(30);
+        Alert.alert('Success', 'OTP sent successfully!');
+      } else {
+        Alert.alert('Error', data.message || 'Failed to send OTP');
+      }
+    } catch (error) {
+      console.error('Send OTP error:', error);
+      Alert.alert('Error', 'Failed to send OTP. Please try again.');
     }
-    req.user = decoded; // Attach user to request object
-    next();
-  });
+  };
+
+  return (
+    <View style={styles.container}>
+      <BackButton />
+      <Text style={styles.header}>{header}</Text>
+      <Text style={styles.subHeader}>{subHeader}</Text>
+      
+      <View style={styles.otpContainer}>
+        <Text style={styles.otpLabel}>{otpLabel}</Text>
+        <View style={styles.inputContainer}>
+          {otp.map((digit, index) => (
+            <TextInput
+              key={index}
+              ref={ref => inputRefs.current[index] = ref}
+              style={styles.input}
+              value={digit}
+              onChangeText={text => handleOtpChange(text.replace(/[^0-9]/g, ''), index)}
+              keyboardType="numeric"
+              maxLength={1}
+              onKeyPress={e => handleKeyPress(e, index)}
+            />
+          ))}
+        </View>
+      </View>
+
+      <TouchableOpacity
+        style={styles.verifyButton}
+        onPress={verifyOTP}
+        disabled={otp.some(digit => !digit)}
+      >
+        <Text style={styles.verifyButtonText}>{verifyButtonText}</Text>
+      </TouchableOpacity>
+
+      {timer > 0 ? (
+        <Text style={styles.timerText}>{`${resendText} ${timer}s`}</Text>
+      ) : (
+        <TouchableOpacity onPress={resendOTP}>
+          <Text style={styles.resendButton}>Resend OTP</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 };
 
-module.exports = {
-  sendOTP,
-  verifyOTPAndLogin,
-  authenticateRequest,
-};
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    paddingHorizontal: 20,
+    backgroundColor: 'white',
+  },
+  header: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginTop: 50,
+    marginBottom: 10,
+  },
+  subHeader: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 30,
+  },
+  otpContainer: {
+    marginBottom: 30,
+  },
+  otpLabel: {
+    fontSize: 16,
+    marginBottom: 10,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 30,
+  },
+  input: {
+    width: 50,
+    height: 50,
+    borderWidth: 1,
+    borderRadius: 10,
+    textAlign: 'center',
+    fontSize: 24,
+    marginHorizontal: 5,
+  },
+  verifyButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  verifyButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  timerText: {
+    textAlign: 'center',
+    color: '#666',
+  },
+  resendButton: {
+    color: '#007AFF',
+    textAlign: 'center',
+    fontSize: 16,
+  },
+});
+
+export default OTPVerification;
