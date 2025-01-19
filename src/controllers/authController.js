@@ -17,7 +17,7 @@ const generateJWTToken = (userId) => {
 const sendOTP = async (req, res) => {
   try {
     const email = process.env.OTPLESS_EMAIL;
-    const channel = process.env.OTPLESS_CHANNEL;
+    const channel = 'SMS';  
     const orderId = generateUniqueValue();
     const expiry = process.env.OTPLESS_EXPIRY;
     const otpLength = process.env.OTPLESS_OTP_LENGTH;
@@ -50,6 +50,10 @@ const sendOTP = async (req, res) => {
 
     const response = await UserDetail.sendOTP(phoneNumber, email, channel, null, orderId, expiry, otpLength, clientId, clientSecret);
     console.log('OTP Response:', response);
+
+    if (!response.success) {
+      throw new Error(response.errorMessage || 'Failed to send OTP');
+    }
 
     return res.status(200).json({ 
       message: 'OTP sent successfully',
