@@ -18,9 +18,11 @@ const otpStore = new Map();
 // Step 1: Send OTP
 const sendOTP = async (req, res) => {
   try {
+    console.log('Received OTP request for:', req.body); // Debug log
     const { mobileNumber } = req.body;
     
     if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
+      console.log('Invalid mobile number:', mobileNumber); // Debug log
       return res.status(400).json({ 
         success: false,
         message: 'Invalid mobile number. Please provide a 10-digit number.' 
@@ -31,16 +33,23 @@ const sendOTP = async (req, res) => {
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
 
     if (!clientId || !clientSecret) {
-      console.error('Missing OTPless credentials');
+      console.error('Missing OTPless credentials. ClientId:', !!clientId, 'ClientSecret:', !!clientSecret);
       return res.status(500).json({ 
         success: false,
-        error: 'Server configuration error' 
+        message: 'Server configuration error' 
       });
     }
 
     const phoneNumber = "+91" + mobileNumber;
     const orderId = generateUniqueValue();
     
+    console.log('Sending OTP with params:', { 
+      phoneNumber, 
+      orderId,
+      hasClientId: !!clientId,
+      hasClientSecret: !!clientSecret 
+    }); // Debug log
+
     const response = await UserDetail.sendOTP({
       phoneNumber,
       orderId,
@@ -50,6 +59,8 @@ const sendOTP = async (req, res) => {
       otpLength: 4,
       expiryMinutes: 5
     });
+
+    console.log('OTPless response:', response); // Debug log
 
     if (!response || !response.success) {
       throw new Error(response?.message || 'Failed to send OTP');
@@ -65,6 +76,7 @@ const sendOTP = async (req, res) => {
     // Cleanup after expiry
     setTimeout(() => otpStore.delete(mobileNumber), 5 * 60 * 1000);
 
+    console.log('OTP sent successfully for:', mobileNumber); // Debug log
     return res.status(200).json({
       success: true,
       message: 'OTP sent successfully',
@@ -72,9 +84,11 @@ const sendOTP = async (req, res) => {
     });
   } catch (error) {
     console.error('OTP Send Error:', error);
+    console.error('Error stack:', error.stack); // Debug log
     return res.status(500).json({
       success: false,
-      error: error.message || 'Failed to send OTP'
+      message: error.message || 'Failed to send OTP',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
