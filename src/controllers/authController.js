@@ -1,5 +1,4 @@
 require('dotenv').config();
-const {generateUniqueValue} = require('../util/generateUniqueName');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user'); // Your User model
 const { UserDetail } = require('otpless-node-js-auth-sdk');
@@ -12,32 +11,44 @@ const generateJWTToken = (userId) => {
   });
 };
 
+// Helper to generate unique value
+const generateUniqueValue = () => {
+  return Math.random().toString(36).substring(2) + Date.now().toString(36);
+};
+
 // Store OTP details temporarily (in production, use Redis or similar)
 const otpStore = new Map();
 
 // Step 1: Send OTP
 const sendOTP = async (req, res) => {
   try {
-    const email = null;  // Not needed for SMS
+    const { mobile } = req.body;  
+    console.log('Sending OTP for:', mobile);
+
+    const clientId = process.env.OTPLESS_CLIENT_ID;
+    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
     const channel = 'SMS';
     const orderId = generateUniqueValue();
     const expiry = process.env.OTPLESS_EXPIRY;
     const otpLength = process.env.OTPLESS_OTP_LENGTH;
-    const clientId = process.env.OTPLESS_CLIENT_ID;
-    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    const { mobileNumber } = req.body;
 
     if (!clientId || !clientSecret) {
       console.error('Missing required environment variables');
-      return res.status(500).json({ error: 'Server configuration error' });
+      return res.status(500).json({ 
+        message: 'Server configuration error',
+        success: false 
+      });
     }
 
-    if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
-      console.error('Invalid mobile number:', mobileNumber);
-      return res.status(400).json({ message: 'Invalid mobile number. Please provide a 10-digit number.' });
+    if (!mobile || !/^\d{10}$/.test(mobile)) {
+      console.error('Invalid mobile number:', mobile);
+      return res.status(400).json({ 
+        message: 'Invalid mobile number. Please provide a 10-digit number.',
+        success: false 
+      });
     }
 
-    const phoneNumber = "+91"+mobileNumber;
+    const phoneNumber = "+91" + mobile;
     console.log('Sending SMS OTP to:', phoneNumber);
 
     const response = await UserDetail.sendOTP(
@@ -54,14 +65,14 @@ const sendOTP = async (req, res) => {
     console.log('OTP Response:', response);
 
     // Store the OTP details for verification
-    otpStore.set(mobileNumber, {
+    otpStore.set(mobile, {
       orderId,
       timestamp: Date.now()
     });
 
     // Clean up old entries after 5 minutes
     setTimeout(() => {
-      otpStore.delete(mobileNumber);
+      otpStore.delete(mobile);
     }, 5 * 60 * 1000);
 
     return res.status(200).json({ 
@@ -71,8 +82,7 @@ const sendOTP = async (req, res) => {
   } catch (error) {
     console.error('OTP Error:', error);
     return res.status(500).json({ 
-      error: error.message,
-      details: 'Failed to send OTP. Please try again.',
+      message: 'Failed to send OTP. Please try again.',
       success: false
     });
   }
@@ -81,25 +91,25 @@ const sendOTP = async (req, res) => {
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
   try {
-    const { mobileNumber, otp } = req.body;
-    console.log('Verifying OTP:', { mobileNumber, otp });
+    const { mobile, otp } = req.body;  
+    console.log('Verifying OTP:', { mobile, otp });
     
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
 
-    if (!mobileNumber || !otp) {
-      console.error('Missing required fields:', { mobileNumber, otp });
+    if (!mobile || !otp) {
+      console.error('Missing required fields:', { mobile, otp });
       return res.status(400).json({ 
         message: 'Mobile number and OTP are required',
         success: false 
       });
     }
 
-    const phoneNumber = "+91"+mobileNumber;
+    const phoneNumber = "+91" + mobile;
     console.log('Verifying OTP for phone:', phoneNumber);
 
     // Get stored OTP details
-    const storedData = otpStore.get(mobileNumber);
+    const storedData = otpStore.get(mobile);
     if (!storedData) {
       console.error('No OTP request found for this number');
       return res.status(400).json({ 
@@ -129,9 +139,9 @@ const verifyOTPAndLogin = async (req, res) => {
       }
 
       // Find or create user in the database
-      let user = await User.findOne({ mobileNumber });
+      let user = await User.findOne({ mobileNumber: mobile });  
       if (!user) {
-        user = new User({ mobileNumber });
+        user = new User({ mobileNumber: mobile });  
         await user.save();
       }
 
@@ -139,7 +149,7 @@ const verifyOTPAndLogin = async (req, res) => {
       const token = generateJWTToken(user._id);
 
       // Clear the stored OTP data
-      otpStore.delete(mobileNumber);
+      otpStore.delete(mobile);
 
       return res.status(200).json({
         token,
