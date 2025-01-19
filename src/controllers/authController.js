@@ -80,19 +80,39 @@ const sendOTP = async (req, res) => {
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
   try {
-    const {mobileNumber,otp,orderId} = req.body; 
+    const { mobileNumber, otp, orderId } = req.body;
+    console.log('Verifying OTP:', { mobileNumber, otp, orderId });
+    
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    if (!mobileNumber || !otp) {
-      return res.status(400).json({ message: 'Mobile number and OTP are required' });
+
+    if (!mobileNumber || !otp || !orderId) {
+      console.error('Missing required fields:', { mobileNumber, otp, orderId });
+      return res.status(400).json({ 
+        message: 'Mobile number, OTP, and orderId are required',
+        success: false 
+      });
     }
 
     const phoneNumber = "+91"+mobileNumber;
-    const response = await UserDetail.verifyOTP("", phoneNumber, orderId, otp, clientId, clientSecret);
+    console.log('Verifying OTP for phone:', phoneNumber);
 
-    const {isOTPVerified} = response; // Replace with actual verification logic
-    if (!isOTPVerified) {
-      return res.status(400).json({ message: 'Invalid OTP' });
+    const response = await UserDetail.verifyOTP(
+      "",           // email (not needed for SMS)
+      phoneNumber,  // phone
+      orderId,      // orderId
+      otp,         // otp
+      clientId,    // clientId
+      clientSecret // clientSecret
+    );
+    console.log('OTP verification response:', response);
+
+    if (!response || !response.isOTPVerified) {
+      console.error('OTP verification failed:', response);
+      return res.status(400).json({ 
+        message: 'Invalid OTP',
+        success: false 
+      });
     }
 
     // Find or create user in the database
@@ -107,11 +127,17 @@ const verifyOTPAndLogin = async (req, res) => {
 
     return res.status(200).json({
       token,
-      userStatus: user.status,
+      userStatus: user.status || 'In Progress',
       message: 'Login successful',
+      success: true
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('OTP verification error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      message: 'Failed to verify OTP',
+      success: false 
+    });
   }
 };
 
