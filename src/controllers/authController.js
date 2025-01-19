@@ -18,24 +18,50 @@ const sendOTP = async (req, res) => {
   try {
     const email = process.env.OTPLESS_EMAIL;
     const channel = process.env.OTPLESS_CHANNEL;
-    const hash = process.env.OTPLESS_TOKEN_ID;
     const orderId = generateUniqueValue();
-    const expiry=process.env.OTPLESS_EXPIRY;
-    const otpLength=process.env.OTPLESS_OTP_LENGTH;
+    const expiry = process.env.OTPLESS_EXPIRY;
+    const otpLength = process.env.OTPLESS_OTP_LENGTH;
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
     const { mobileNumber } = req.body;
 
-    if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
-      return res.status(400).json({ message: 'Invalid mobile number' });
+    // Log environment variables (excluding secrets)
+    console.log('Environment Check:', {
+      hasEmail: !!email,
+      channel,
+      expiry,
+      otpLength,
+      hasClientId: !!clientId,
+      hasClientSecret: !!clientSecret
+    });
+
+    if (!email || !clientId || !clientSecret) {
+      console.error('Missing required environment variables');
+      return res.status(500).json({ error: 'Server configuration error' });
     }
+
+    if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
+      console.error('Invalid mobile number:', mobileNumber);
+      return res.status(400).json({ message: 'Invalid mobile number. Please provide a 10-digit number.' });
+    }
+
     const phoneNumber = "+91"+mobileNumber;
+    console.log('Sending OTP to:', phoneNumber);
 
-    const response = await UserDetail.sendOTP(phoneNumber, email, channel, hash, orderId, expiry, otpLength, clientId, clientSecret);
+    const response = await UserDetail.sendOTP(phoneNumber, email, channel, null, orderId, expiry, otpLength, clientId, clientSecret);
+    console.log('OTP Response:', response);
 
-    return res.status(200).json({ message: 'OTP sent successfully' ,response});
+    return res.status(200).json({ 
+      message: 'OTP sent successfully',
+      orderId: orderId,
+      response
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('OTP Error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      details: 'Failed to send OTP. Please try again.'
+    });
   }
 };
 
