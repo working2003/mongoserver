@@ -18,163 +18,152 @@ const otpStore = new Map();
 // Step 1: Send OTP
 const sendOTP = async (req, res) => {
   try {
-    const email = null;  // Not needed for SMS
-    const channel = 'SMS';
-    const orderId = generateUniqueValue();
-    const expiry = process.env.OTPLESS_EXPIRY;
-    const otpLength = process.env.OTPLESS_OTP_LENGTH;
+    const { mobileNumber } = req.body;
+    
+    if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Invalid mobile number. Please provide a 10-digit number.' 
+      });
+    }
+
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    const { mobileNumber } = req.body;
 
     if (!clientId || !clientSecret) {
-      console.error('Missing required environment variables');
-      return res.status(500).json({ error: 'Server configuration error' });
+      console.error('Missing OTPless credentials');
+      return res.status(500).json({ 
+        success: false,
+        error: 'Server configuration error' 
+      });
     }
 
-    if (!mobileNumber || !/^\d{10}$/.test(mobileNumber)) {
-      console.error('Invalid mobile number:', mobileNumber);
-      return res.status(400).json({ message: 'Invalid mobile number. Please provide a 10-digit number.' });
+    const phoneNumber = "+91" + mobileNumber;
+    const orderId = generateUniqueValue();
+    
+    const response = await UserDetail.sendOTP({
+      phoneNumber,
+      orderId,
+      channel: 'sms',
+      clientId,
+      clientSecret,
+      otpLength: 4,
+      expiryMinutes: 5
+    });
+
+    if (!response || !response.success) {
+      throw new Error(response?.message || 'Failed to send OTP');
     }
 
-    const phoneNumber = "+91"+mobileNumber;
-    console.log('Sending SMS OTP to:', phoneNumber);
-
-    const response = await UserDetail.sendOTP(
-      phoneNumber,   // phone number
-      null,         // email (not needed for SMS)
-      channel,      // SMS channel
-      null,         // hash (optional)
-      orderId,      // orderId
-      expiry,       // expiry
-      otpLength,    // otpLength
-      clientId,     // clientId
-      clientSecret  // clientSecret
-    );
-    console.log('OTP Response:', response);
-
-    // Store the OTP details for verification
+    // Store orderId for verification
     otpStore.set(mobileNumber, {
       orderId,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      attempts: 0
     });
 
-    // Clean up old entries after 5 minutes
-    setTimeout(() => {
-      otpStore.delete(mobileNumber);
-    }, 5 * 60 * 1000);
+    // Cleanup after expiry
+    setTimeout(() => otpStore.delete(mobileNumber), 5 * 60 * 1000);
 
-    return res.status(200).json({ 
+    return res.status(200).json({
+      success: true,
       message: 'OTP sent successfully',
-      success: true
+      orderId
     });
   } catch (error) {
-    console.error('OTP Error:', error);
-    return res.status(500).json({ 
-      error: error.message,
-      details: 'Failed to send OTP. Please try again.',
-      success: false
+    console.error('OTP Send Error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to send OTP'
     });
   }
 };
 
-// Step 2: Verify OTP and Login
+// Step 2: Verify OTP
 const verifyOTPAndLogin = async (req, res) => {
   try {
-    const { mobileNumber, otp } = req.body;
-    console.log('DEBUG - Starting OTP verification with:', { mobileNumber, otp });
-    
-    const clientId = process.env.OTPLESS_CLIENT_ID;
-    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-    console.log('DEBUG - Client credentials present:', { 
-      hasClientId: !!clientId, 
-      hasClientSecret: !!clientSecret 
-    });
+    const { mobileNumber, otp, firstName } = req.body;
 
     if (!mobileNumber || !otp) {
-      console.error('Missing required fields:', { mobileNumber, otp });
-      return res.status(400).json({ 
-        message: 'Mobile number and OTP are required',
-        success: false 
+      return res.status(400).json({
+        success: false,
+        message: 'Mobile number and OTP are required'
       });
     }
 
-    const phoneNumber = "+91"+mobileNumber;
-    console.log('DEBUG - Formatted phone number:', phoneNumber);
+    const otpData = otpStore.get(mobileNumber);
+    
+    if (!otpData) {
+      return res.status(400).json({
+        success: false,
+        message: 'OTP expired or not found. Please request a new OTP.'
+      });
+    }
 
-    // Get stored OTP details
-    const storedData = otpStore.get(mobileNumber);
-    console.log('DEBUG - Stored OTP data:', { 
-      hasStoredData: !!storedData,
-      orderId: storedData?.orderId,
-      timeSinceRequest: storedData ? (Date.now() - storedData.timestamp)/1000 + ' seconds' : 'N/A'
+    if (otpData.attempts >= 3) {
+      otpStore.delete(mobileNumber);
+      return res.status(400).json({
+        success: false,
+        message: 'Too many failed attempts. Please request a new OTP.'
+      });
+    }
+
+    const clientId = process.env.OTPLESS_CLIENT_ID;
+    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
+
+    const verifyResponse = await UserDetail.verifyOTP({
+      phoneNumber: "+91" + mobileNumber,
+      otp,
+      orderId: otpData.orderId,
+      clientId,
+      clientSecret
     });
 
-    if (!storedData) {
-      console.error('No OTP request found for this number');
-      return res.status(400).json({ 
-        message: 'Please request a new OTP',
-        success: false 
-      });
+    if (!verifyResponse || !verifyResponse.success) {
+      otpData.attempts += 1;
+      throw new Error(verifyResponse?.message || 'Invalid OTP');
     }
 
-    try {
-      console.log('DEBUG - Attempting OTP verification with orderId:', storedData.orderId);
-      const response = await UserDetail.verifyOTP(
-        "",           // email
-        phoneNumber,  // phone
-        storedData.orderId,  // use stored orderId
-        otp,         // otp
-        clientId,    // clientId
-        clientSecret // clientSecret
-      );
-      console.log('DEBUG - Raw OTP verification response:', response);
-      console.log('DEBUG - Stringified response:', JSON.stringify(response, null, 2));
+    // OTP verified successfully, remove from store
+    otpStore.delete(mobileNumber);
 
-      if (!response || !response.isOTPVerified) {
-        console.error('DEBUG - OTP verification failed. Response details:', {
-          hasResponse: !!response,
-          isOTPVerified: response?.isOTPVerified,
-          responseKeys: response ? Object.keys(response) : []
-        });
-        return res.status(400).json({ 
-          message: 'Invalid OTP',
-          success: false 
-        });
-      }
-
-      // Find or create user in the database
-      let user = await User.findOne({ mobileNumber });
-      if (!user) {
-        user = new User({ mobileNumber });
-        await user.save();
-      }
-
-      // Generate JWT
-      const token = generateJWTToken(user._id);
-
-      // Clear the stored OTP data
-      otpStore.delete(mobileNumber);
-
-      return res.status(200).json({
-        token,
-        userStatus: user.status || 'In Progress',
-        message: 'Login successful',
-        success: true
+    // Create or update user
+    let user = await User.findOne({ mobileNumber });
+    
+    if (!user) {
+      user = new User({
+        mobileNumber,
+        firstName,
+        status: "Active",
+        lastLogIn: new Date()
       });
-    } catch (verifyError) {
-      console.error('OTP verification error:', verifyError);
-      return res.status(400).json({ 
-        message: 'Failed to verify OTP',
-        success: false 
-      });
+    } else {
+      user.firstName = firstName || user.firstName;
+      user.status = "Active";
+      user.lastLogIn = new Date();
     }
+    
+    await user.save();
+
+    // Generate JWT token
+    const token = generateJWTToken(user._id);
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully',
+      token,
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        mobileNumber: user.mobileNumber,
+        status: user.status
+      }
+    });
   } catch (error) {
-    console.error('OTP verification error:', error);
-    res.status(500).json({ 
-      error: error.message,
-      message: 'Failed to verify OTP',
-      success: false 
+    console.error('OTP Verification Error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to verify OTP'
     });
   }
 };
