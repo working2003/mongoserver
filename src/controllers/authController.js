@@ -181,8 +181,79 @@ const authenticateRequest = (req, res, next) => {
   });
 };
 
+// OTPLESS Authentication
+const handleOtplessAuth = async (req, res) => {
+  try {
+    // Check required environment variables
+    if (!process.env.JWT_SECRET) {
+      console.error('Missing JWT_SECRET environment variable');
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Server configuration error' 
+      });
+    }
+
+    const { waId, waNumber } = req.body;
+
+    if (!waId || !waNumber) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing required WhatsApp authentication data' 
+      });
+    }
+
+    // Clean phone number - remove any non-digit characters
+    const cleanPhoneNumber = waNumber.replace(/\D/g, '');
+    
+    // Ensure it's a valid phone number
+    if (!/^\d{10}$/.test(cleanPhoneNumber)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid phone number format'
+      });
+    }
+
+    // Find or create user
+    let user = await User.findOne({ whatsappId: waId });
+    
+    if (!user) {
+      // Create new user
+      user = new User({
+        whatsappId: waId,
+        mobileNumber: cleanPhoneNumber, // Use the cleaned phone number
+        registeredAt: new Date()
+      });
+      await user.save();
+    }
+
+    // Generate JWT token
+    const token = generateJWTToken(user._id);
+
+    // Return success response
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user._id,
+        mobileNumber: user.mobileNumber,
+        whatsappId: user.whatsappId,
+        firstName: user.firstName,
+        lastName: user.lastName
+      }
+    });
+
+  } catch (error) {
+    console.error('OTPLESS auth error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Authentication failed' 
+    });
+  }
+};
+
 module.exports = {
   sendOTP,
   verifyOTPAndLogin,
   authenticateRequest,
+  handleOtplessAuth
 };
