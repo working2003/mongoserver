@@ -64,14 +64,15 @@ const sendOTP = async (req, res) => {
     // Even if OTPless API returns error, if user receives OTP, we should proceed
     return res.status(200).json({ 
       message: 'OTP sent successfully',
-      orderId: orderId,
-      success: true  // Add this to ensure frontend knows to proceed
+      orderId: orderId,  // Make sure orderId is included
+      success: true
     });
   } catch (error) {
     console.error('OTP Error:', error);
-    res.status(500).json({ 
+    return res.status(500).json({ 
       error: error.message,
       details: 'Failed to send OTP. Please try again.',
+      orderId: generateUniqueValue(), // Include orderId in error response
       success: false
     });
   }
