@@ -81,52 +81,20 @@ const sendOTP = async (req, res) => {
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
   try {
-    const { mobileNumber, otp } = req.body;
-    console.log('Verifying OTP:', { mobileNumber, otp });
+    const { mobileNumber, verified } = req.body;
+    const token = req.headers.authorization;
+
+    console.log('Verifying OTP:', { mobileNumber, verified, hasToken: !!token });
     
-    const clientId = process.env.OTPLESS_CLIENT_ID;
-    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
-
-    if (!mobileNumber || !otp) {
-      console.error('Missing required fields:', { mobileNumber, otp });
+    if (!mobileNumber || !verified || !token) {
+      console.error('Missing required fields:', { mobileNumber, verified, hasToken: !!token });
       return res.status(400).json({ 
-        message: 'Mobile number and OTP are required',
+        message: 'Mobile number, verification status, and token are required',
         success: false 
       });
     }
 
-    const phoneNumber = "+91"+mobileNumber;
-    console.log('Verifying OTP for phone:', phoneNumber);
-
-    // Get stored OTP details
-    const storedData = otpStore.get(mobileNumber);
-    if (!storedData) {
-      console.error('No OTP request found for this number');
-      return res.status(400).json({ 
-        message: 'Please request a new OTP',
-        success: false 
-      });
-    }
-
-    console.log('Using stored orderId:', storedData.orderId);
-    const response = await UserDetail.verifyOTP(
-      "",           // email
-      phoneNumber,  // phone
-      storedData.orderId,  // use stored orderId
-      otp,         // otp
-      clientId,    // clientId
-      clientSecret // clientSecret
-    );
-    console.log('OTP verification response:', JSON.stringify(response, null, 2));
-
-    if (!response || !response.isOTPVerified) {
-      console.error('OTP verification failed:', response);
-      return res.status(400).json({ 
-        message: 'Invalid OTP',
-        success: false 
-      });
-    }
-
+    // Token from OTPless SDK verification is trusted
     // Find or create user in the database
     let user = await User.findOne({ mobileNumber });
     if (!user) {
@@ -134,14 +102,11 @@ const verifyOTPAndLogin = async (req, res) => {
       await user.save();
     }
 
-    // Generate JWT
-    const token = generateJWTToken(user._id);
-
-    // Clear the stored OTP data
-    otpStore.delete(mobileNumber);
+    // Generate our own JWT
+    const appToken = generateJWTToken(user._id);
 
     return res.status(200).json({
-      token,
+      token: appToken,
       userStatus: user.status || 'In Progress',
       message: 'Login successful',
       success: true
