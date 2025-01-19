@@ -94,40 +94,81 @@ const verifyOTPAndLogin = async (req, res) => {
     const phoneNumber = "+91"+mobileNumber;
     console.log('Verifying OTP for phone:', phoneNumber);
 
-    const response = await UserDetail.verifyOTP(
-      "",           // email (not needed for SMS)
-      phoneNumber,  // phone
-      null,         // orderId (not needed)
-      otp,         // otp
-      clientId,    // clientId
-      clientSecret // clientSecret
-    );
-    console.log('OTP verification response:', response);
+    // Try with orderId first
+    const orderId = generateUniqueValue();
+    console.log('Attempting verification with new orderId:', orderId);
 
-    if (!response || !response.isOTPVerified) {
-      console.error('OTP verification failed:', response);
-      return res.status(400).json({ 
-        message: 'Invalid OTP',
-        success: false 
-      });
+    try {
+      const response = await UserDetail.verifyOTP(
+        "",           // email (not needed for SMS)
+        phoneNumber,  // phone
+        orderId,      // trying with a new orderId
+        otp,         // otp
+        clientId,    // clientId
+        clientSecret // clientSecret
+      );
+      console.log('Full OTP verification response:', JSON.stringify(response, null, 2));
+
+      if (response && response.isOTPVerified) {
+        // Find or create user in the database
+        let user = await User.findOne({ mobileNumber });
+        if (!user) {
+          user = new User({ mobileNumber });
+          await user.save();
+        }
+
+        // Generate JWT
+        const token = generateJWTToken(user._id);
+
+        return res.status(200).json({
+          token,
+          userStatus: user.status || 'In Progress',
+          message: 'Login successful',
+          success: true
+        });
+      } else {
+        // Try without orderId as fallback
+        console.log('First attempt failed, trying without orderId');
+        const fallbackResponse = await UserDetail.verifyOTP(
+          "",           // email
+          phoneNumber,  // phone
+          null,        // no orderId
+          otp,         // otp
+          clientId,    // clientId
+          clientSecret // clientSecret
+        );
+        console.log('Fallback verification response:', JSON.stringify(fallbackResponse, null, 2));
+
+        if (!fallbackResponse || !fallbackResponse.isOTPVerified) {
+          console.error('Both verification attempts failed:', { 
+            firstAttempt: response,
+            fallbackAttempt: fallbackResponse 
+          });
+          return res.status(400).json({ 
+            message: 'Invalid OTP',
+            success: false 
+          });
+        }
+
+        // If fallback succeeds, proceed with user creation/login
+        let user = await User.findOne({ mobileNumber });
+        if (!user) {
+          user = new User({ mobileNumber });
+          await user.save();
+        }
+
+        const token = generateJWTToken(user._id);
+        return res.status(200).json({
+          token,
+          userStatus: user.status || 'In Progress',
+          message: 'Login successful',
+          success: true
+        });
+      }
+    } catch (verifyError) {
+      console.error('OTP verification error:', verifyError);
+      throw verifyError;
     }
-
-    // Find or create user in the database
-    let user = await User.findOne({ mobileNumber });
-    if (!user) {
-      user = new User({ mobileNumber });
-      await user.save();
-    }
-
-    // Generate JWT
-    const token = generateJWTToken(user._id);
-
-    return res.status(200).json({
-      token,
-      userStatus: user.status || 'In Progress',
-      message: 'Login successful',
-      success: true
-    });
   } catch (error) {
     console.error('OTP verification error:', error);
     res.status(500).json({ 
