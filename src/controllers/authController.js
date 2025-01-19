@@ -32,7 +32,7 @@ const sendOTP = async (req, res) => {
       otpLength,
       hasClientId: !!clientId,
       hasClientSecret: !!clientSecret,
-      orderId // Log orderId for debugging
+      orderId // Log orderId
     });
 
     if (!clientId || !clientSecret) {
@@ -48,9 +48,10 @@ const sendOTP = async (req, res) => {
     const phoneNumber = "+91"+mobileNumber;
     console.log('Sending SMS OTP to:', phoneNumber, 'with orderId:', orderId);
 
+    // For SMS OTP, we don't need email
     const response = await UserDetail.sendOTP(
+      phoneNumber,   // phone number
       null,         // email (not needed for SMS)
-      phoneNumber,  // phone
       channel,      // SMS channel
       null,         // hash (optional)
       orderId,      // orderId
@@ -62,16 +63,20 @@ const sendOTP = async (req, res) => {
     console.log('OTP Response:', response);
 
     // Always include orderId in the response
+    console.log('Sending response with orderId:', orderId);
     return res.status(200).json({ 
       message: 'OTP sent successfully',
-      orderId: orderId,
+      orderId,  // Include orderId in success response
       success: true
     });
   } catch (error) {
     console.error('OTP Error:', error);
+    // Include orderId even in error response
+    const errorOrderId = generateUniqueValue();
     return res.status(500).json({ 
       error: error.message,
       details: 'Failed to send OTP. Please try again.',
+      orderId: errorOrderId,
       success: false
     });
   }
