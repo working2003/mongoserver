@@ -18,7 +18,6 @@ const sendOTP = async (req, res) => {
   try {
     const email = null;  // Not needed for SMS
     const channel = 'SMS';
-    const orderId = generateUniqueValue();
     const expiry = process.env.OTPLESS_EXPIRY;
     const otpLength = process.env.OTPLESS_OTP_LENGTH;
     const clientId = process.env.OTPLESS_CLIENT_ID;
@@ -31,8 +30,7 @@ const sendOTP = async (req, res) => {
       expiry,
       otpLength,
       hasClientId: !!clientId,
-      hasClientSecret: !!clientSecret,
-      orderId // Log orderId
+      hasClientSecret: !!clientSecret
     });
 
     if (!clientId || !clientSecret) {
@@ -46,15 +44,15 @@ const sendOTP = async (req, res) => {
     }
 
     const phoneNumber = "+91"+mobileNumber;
-    console.log('Sending SMS OTP to:', phoneNumber, 'with orderId:', orderId);
+    console.log('Sending SMS OTP to:', phoneNumber);
 
-    // For SMS OTP, we don't need email
+    // For SMS OTP, we don't need email or orderId
     const response = await UserDetail.sendOTP(
       phoneNumber,   // phone number
       null,         // email (not needed for SMS)
       channel,      // SMS channel
       null,         // hash (optional)
-      orderId,      // orderId
+      null,         // orderId (optional)
       expiry,       // expiry
       otpLength,    // otpLength
       clientId,     // clientId
@@ -62,21 +60,15 @@ const sendOTP = async (req, res) => {
     );
     console.log('OTP Response:', response);
 
-    // Always include orderId in the response
-    console.log('Sending response with orderId:', orderId);
     return res.status(200).json({ 
       message: 'OTP sent successfully',
-      orderId,  // Include orderId in success response
       success: true
     });
   } catch (error) {
     console.error('OTP Error:', error);
-    // Include orderId even in error response
-    const errorOrderId = generateUniqueValue();
     return res.status(500).json({ 
       error: error.message,
       details: 'Failed to send OTP. Please try again.',
-      orderId: errorOrderId,
       success: false
     });
   }
@@ -85,16 +77,16 @@ const sendOTP = async (req, res) => {
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
   try {
-    const { mobileNumber, otp, orderId } = req.body;
-    console.log('Verifying OTP:', { mobileNumber, otp, orderId });
+    const { mobileNumber, otp } = req.body;
+    console.log('Verifying OTP:', { mobileNumber, otp });
     
     const clientId = process.env.OTPLESS_CLIENT_ID;
     const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
 
-    if (!mobileNumber || !otp || !orderId) {
-      console.error('Missing required fields:', { mobileNumber, otp, orderId });
+    if (!mobileNumber || !otp) {
+      console.error('Missing required fields:', { mobileNumber, otp });
       return res.status(400).json({ 
-        message: 'Mobile number, OTP, and orderId are required',
+        message: 'Mobile number and OTP are required',
         success: false 
       });
     }
@@ -105,7 +97,7 @@ const verifyOTPAndLogin = async (req, res) => {
     const response = await UserDetail.verifyOTP(
       "",           // email (not needed for SMS)
       phoneNumber,  // phone
-      orderId,      // orderId
+      null,         // orderId (not needed)
       otp,         // otp
       clientId,    // clientId
       clientSecret // clientSecret
