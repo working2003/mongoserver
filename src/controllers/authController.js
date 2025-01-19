@@ -16,8 +16,8 @@ const generateJWTToken = (userId) => {
 // Step 1: Send OTP
 const sendOTP = async (req, res) => {
   try {
-    const email = process.env.OTPLESS_EMAIL;
-    const channel = 'SMS';  
+    const email = null;  // Not needed for SMS
+    const channel = 'SMS';
     const orderId = generateUniqueValue();
     const expiry = process.env.OTPLESS_EXPIRY;
     const otpLength = process.env.OTPLESS_OTP_LENGTH;
@@ -27,7 +27,6 @@ const sendOTP = async (req, res) => {
 
     // Log environment variables (excluding secrets)
     console.log('Environment Check:', {
-      hasEmail: !!email,
       channel,
       expiry,
       otpLength,
@@ -35,7 +34,7 @@ const sendOTP = async (req, res) => {
       hasClientSecret: !!clientSecret
     });
 
-    if (!email || !clientId || !clientSecret) {
+    if (!clientId || !clientSecret) {
       console.error('Missing required environment variables');
       return res.status(500).json({ error: 'Server configuration error' });
     }
@@ -46,9 +45,20 @@ const sendOTP = async (req, res) => {
     }
 
     const phoneNumber = "+91"+mobileNumber;
-    console.log('Sending OTP to:', phoneNumber);
+    console.log('Sending SMS OTP to:', phoneNumber);
 
-    const response = await UserDetail.sendOTP(phoneNumber, email, channel, null, orderId, expiry, otpLength, clientId, clientSecret);
+    // For SMS OTP, we don't need email
+    const response = await UserDetail.sendOTP(
+      phoneNumber,   // phone number
+      null,         // email (not needed for SMS)
+      channel,      // SMS channel
+      null,         // hash (optional)
+      orderId,      // orderId
+      expiry,       // expiry
+      otpLength,    // otpLength
+      clientId,     // clientId
+      clientSecret  // clientSecret
+    );
     console.log('OTP Response:', response);
 
     if (!response.success) {
