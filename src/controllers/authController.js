@@ -81,36 +81,79 @@ const sendOTP = async (req, res) => {
 // Step 2: Verify OTP and Login
 const verifyOTPAndLogin = async (req, res) => {
   try {
-    const { mobileNumber, verified } = req.body;
-    const token = req.headers.authorization;
-
-    console.log('Verifying OTP:', { mobileNumber, verified, hasToken: !!token });
+    const { mobileNumber, otp } = req.body;
+    console.log('Verifying OTP:', { mobileNumber, otp });
     
-    if (!mobileNumber || !verified || !token) {
-      console.error('Missing required fields:', { mobileNumber, verified, hasToken: !!token });
+    const clientId = process.env.OTPLESS_CLIENT_ID;
+    const clientSecret = process.env.OTPLESS_CLIENT_SECRET;
+
+    if (!mobileNumber || !otp) {
+      console.error('Missing required fields:', { mobileNumber, otp });
       return res.status(400).json({ 
-        message: 'Mobile number, verification status, and token are required',
+        message: 'Mobile number and OTP are required',
         success: false 
       });
     }
 
-    // Token from OTPless SDK verification is trusted
-    // Find or create user in the database
-    let user = await User.findOne({ mobileNumber });
-    if (!user) {
-      user = new User({ mobileNumber });
-      await user.save();
+    const phoneNumber = "+91"+mobileNumber;
+    console.log('Verifying OTP for phone:', phoneNumber);
+
+    // Get stored OTP details
+    const storedData = otpStore.get(mobileNumber);
+    if (!storedData) {
+      console.error('No OTP request found for this number');
+      return res.status(400).json({ 
+        message: 'Please request a new OTP',
+        success: false 
+      });
     }
 
-    // Generate our own JWT
-    const appToken = generateJWTToken(user._id);
+    try {
+      console.log('Using stored orderId:', storedData.orderId);
+      const response = await UserDetail.verifyOTP(
+        "",           // email
+        phoneNumber,  // phone
+        storedData.orderId,  // use stored orderId
+        otp,         // otp
+        clientId,    // clientId
+        clientSecret // clientSecret
+      );
+      console.log('OTP verification response:', JSON.stringify(response, null, 2));
 
-    return res.status(200).json({
-      token: appToken,
-      userStatus: user.status || 'In Progress',
-      message: 'Login successful',
-      success: true
-    });
+      if (!response || !response.isOTPVerified) {
+        console.error('OTP verification failed:', response);
+        return res.status(400).json({ 
+          message: 'Invalid OTP',
+          success: false 
+        });
+      }
+
+      // Find or create user in the database
+      let user = await User.findOne({ mobileNumber });
+      if (!user) {
+        user = new User({ mobileNumber });
+        await user.save();
+      }
+
+      // Generate JWT
+      const token = generateJWTToken(user._id);
+
+      // Clear the stored OTP data
+      otpStore.delete(mobileNumber);
+
+      return res.status(200).json({
+        token,
+        userStatus: user.status || 'In Progress',
+        message: 'Login successful',
+        success: true
+      });
+    } catch (verifyError) {
+      console.error('OTP verification error:', verifyError);
+      return res.status(400).json({ 
+        message: 'Failed to verify OTP',
+        success: false 
+      });
+    }
   } catch (error) {
     console.error('OTP verification error:', error);
     res.status(500).json({ 
